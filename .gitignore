@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.env
+.venv/
+venv/
+.tmp_pkg/
+data/
+threads/
+notion_account.json
+*.log
