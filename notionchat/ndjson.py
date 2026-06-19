@@ -303,7 +303,7 @@ class NDJSONStreamParser:
 
         if event_type == "patch":
             self._handle_patch(event)
-        elif event_type == "patch-start":
+        elif event_type in ("patch-start", "patch-sync"):
             self._handle_patch_start(event)
         elif event_type == "agent-inference":
             self._handle_agent_inference(event)
@@ -429,21 +429,34 @@ class NDJSONStreamParser:
             self._absorb_inline_section(section_idx, v)
             return
 
-        if o == "a" and "/value/-" in p and isinstance(v, dict):
-            entry_type = v.get("type")
+        if o in ("a", "p") and "/value/" in p and isinstance(v, dict):
             state_prefix = p[: p.index("/value/")]
-            idx = self._value_counts.get(state_prefix, 0)
-            entry_path = f"{state_prefix}/value/{idx}"
-            if isinstance(entry_type, str):
-                self._value_types[entry_path] = entry_type
-            self._value_counts[state_prefix] = idx + 1
-            content = v.get("content")
-            if entry_type == "tool_use":
-                self._register_tool_use(entry_path, v)
+            entry_type = v.get("type")
+            
+            # Extract the index or '-' from the path (e.g. /s/0/value/12 or /s/0/value/-)
+            val_part = p[p.index("/value/") + 7 :]
+            if "/" not in val_part:
+                if val_part == "-":
+                    idx = self._value_counts.get(state_prefix, 0)
+                else:
+                    try:
+                        idx = int(val_part)
+                    except ValueError:
+                        idx = self._value_counts.get(state_prefix, 0)
+                
+                entry_path = f"{state_prefix}/value/{idx}"
+                if isinstance(entry_type, str):
+                    self._value_types[entry_path] = entry_type
+                
+                self._value_counts[state_prefix] = max(self._value_counts.get(state_prefix, 0), idx + 1)
+                
+                content = v.get("content")
+                if entry_type == "tool_use":
+                    self._register_tool_use(entry_path, v)
+                    return
+                if entry_type in ("text", "thinking"):
+                    self._block_contents[entry_path] = content or ""
                 return
-            if entry_type in ("text", "thinking"):
-                self._block_contents[entry_path] = content or ""
-            return
 
         if o in ("a", "x", "p") and p.endswith("/name") and isinstance(v, str):
             prefix = self._tool_prefix(p)
