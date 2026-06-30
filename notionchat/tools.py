@@ -322,14 +322,6 @@ def align_tool_calls_to_client(
     return out
 
 
-def strip_loop_explore_tool_calls(tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        tc
-        for tc in tool_calls
-        if str((tc.get("function") or {}).get("name", "")) not in _LOOP_EXPLORE_TOOLS
-    ]
-
-
 def filter_agent_tool_calls(
     tool_calls: list[dict[str, Any]],
     *,
@@ -504,11 +496,6 @@ def conversation_has_tool_history(messages: list[Any]) -> bool:
 
 _CODE_FENCE_RE = re.compile(
     r"```(?:(\w+)?(?::([^\n]+))?)?\s*\n([\s\S]*?)```",
-    re.IGNORECASE,
-)
-
-_CREATE_INTENT_RE = re.compile(
-    r"\b(create|make|write|add|give\s+me|sample|scaffold|build|generate)\b",
     re.IGNORECASE,
 )
 
@@ -767,14 +754,6 @@ def _make_write_tool_call(tool_name: str, path: str, contents: str) -> dict[str,
         tool_name,
         {"path": path.replace("\\", "/"), "contents": contents},
     )
-
-
-def _pick_tool(client_tools: list[dict[str, Any]] | None, *candidates: str) -> str | None:
-    allowed = client_tool_names(client_tools)
-    for name in candidates:
-        if name in allowed:
-            return name
-    return None
 
 
 def last_assistant_tool_names(messages: list[Any]) -> list[str]:
