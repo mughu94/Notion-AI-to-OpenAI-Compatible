@@ -50,6 +50,49 @@ def _extract_user(record_map: dict[str, Any], user_id: str) -> tuple[str, str]:
     return name, email
 
 
+def _fetch_load_user_content(cookie: str) -> tuple[dict[str, Any], str, str | None, str, str]:
+    """Call Notion loadUserContent and return parsed session fields."""
+    parsed = parse_browser_cookie(cookie)
+    token = parsed.get("token_v2")
+    if not token:
+        raise NotionChatError("Cookie missing token_v2", status_code=400)
+
+    user_id = parsed.get("notion_user_id") or None
+    browser_id = parsed.get("notion_browser_id") or str(uuid.uuid4())
+    device_id = parsed.get("device_id") or str(uuid.uuid4())
+
+    headers = _bootstrap_headers(token, browser_id, user_id)
+    resp = requests.post(
+        f"{BASE_URL}/loadUserContent",
+        json={"cursor": {"stack": []}, "limit": 100},
+        headers=headers,
+        impersonate="chrome",
+        timeout=30.0,
+    )
+    if resp.status_code != 200:
+        raise NotionChatError(
+            f"loadUserContent failed ({resp.status_code}): {resp.text[:300]!r}",
+            status_code=502,
+        )
+    return resp.json(), token, user_id, browser_id, device_id
+
+
+def list_workspaces_from_cookie_sync(cookie: str) -> list[Workspace]:
+    """Return Notion workspaces available to the browser cookie."""
+    data, _, user_id, _, _ = _fetch_load_user_content(cookie)
+    record_map = data.get("recordMap") or {}
+    if not user_id:
+        for uid in record_map.get("notion_user") or {}:
+            user_id = uid
+            break
+    if not user_id:
+        raise NotionChatError("Could not determine notion_user_id", status_code=502)
+    workspaces = _extract_workspaces(record_map)
+    if not workspaces:
+        raise NotionChatError("No workspaces found for this account", status_code=502)
+    return workspaces
+
+
 def _extract_workspaces(record_map: dict[str, Any]) -> list[Workspace]:
     spaces: list[Workspace] = []
     space_map = record_map.get("space") or {}
@@ -82,29 +125,7 @@ def bootstrap_from_cookie_sync(
     account_path: str = "notion_account.json",
 ) -> NotionAccount:
     """Sync variant used during server startup when space_id is missing."""
-    parsed = parse_browser_cookie(cookie)
-    token = parsed.get("token_v2")
-    if not token:
-        raise NotionChatError("Cookie missing token_v2", status_code=400)
-
-    user_id = parsed.get("notion_user_id") or None
-    browser_id = parsed.get("notion_browser_id") or str(uuid.uuid4())
-    device_id = parsed.get("device_id") or str(uuid.uuid4())
-
-    headers = _bootstrap_headers(token, browser_id, user_id)
-    resp = requests.post(
-        f"{BASE_URL}/loadUserContent",
-        json={"cursor": {"stack": []}, "limit": 100},
-        headers=headers,
-        impersonate="chrome",
-        timeout=30.0,
-    )
-    if resp.status_code != 200:
-        raise NotionChatError(
-            f"loadUserContent failed ({resp.status_code}): {resp.text[:300]!r}",
-            status_code=502,
-        )
-    data = resp.json()
+    data, token, user_id, browser_id, device_id = _fetch_load_user_content(cookie)
 
     return _account_from_load_user_content(
         cookie=cookie,
@@ -153,7 +174,7 @@ def _account_from_load_user_content(
     elif len(workspaces) > 1:
         names = ", ".join(w.space_name for w in workspaces)
         raise NotionChatError(
-            f"Multiple workspaces found. Set NOTION_SPACE_NAME or run init with --space-name. Available: {names}",
+            f"Multiple workspaces found. Run `python -m notionchat setup` or init with --space-name. Available: {names}",
             status_code=400,
         )
 
